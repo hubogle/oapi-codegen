@@ -16,6 +16,7 @@ type Configuration struct {
 	Generate          GenerateOptions      `yaml:"generate,omitempty"`
 	Compatibility     CompatibilityOptions `yaml:"compatibility,omitempty"`
 	OutputOptions     OutputOptions        `yaml:"output-options,omitempty"`
+	OutputDirOptions  OutputDirOptions     `yaml:"output-dir,omitempty"`
 	ImportMapping     map[string]string    `yaml:"import-mapping,omitempty"` // ImportMapping specifies the golang package path for each external reference
 	AdditionalImports []AdditionalImport   `yaml:"additional-imports,omitempty"`
 }
@@ -87,6 +88,17 @@ type OutputOptions struct {
 	ExcludeSchemas     []string `yaml:"exclude-schemas,omitempty"`      // Exclude from generation schemas with given names. Ignored when empty.
 	ResponseTypeSuffix string   `yaml:"response-type-suffix,omitempty"` // The suffix used for responses types
 	ClientTypeName     string   `yaml:"client-type-name,omitempty"`     // Override the default generated client type with the value
+}
+
+type OutputDirOptions struct {
+	LogicDir      string `yaml:"logic-dir,omitempty"`      // logic 路径
+	HandlerDir    string `yaml:"handler-dir,omitempty"`    // handler 路径
+	RoutesDir     string `yaml:"routes-dir,omitempty"`     // 路由路径
+	TypesDir      string `yaml:"types-dir,omitempty"`      // 请求体和返回体
+	MiddlewareDir string `yaml:"middleware-dir,omitempty"` // 中间件路径
+	SvcDir        string `yaml:"svc-dir,omitempty"`        // 资源文件夹，定义 mysql、redis 链接
+	CodeDir       string `yaml:"code-dir,omitempty"`       // 定义标注码
+	ResponseDir   string `yaml:"response-dir,omitempty"`   // 定义返回体
 }
 
 // UpdateDefaults sets reasonable default values for unset fields in Configuration

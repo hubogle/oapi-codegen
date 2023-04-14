@@ -906,3 +906,18 @@ func TypeDefinitionsEquivalent(t1, t2 TypeDefinition) bool {
 	}
 	return t1.Schema.OAPISchema == t2.Schema.OAPISchema
 }
+
+func CamelToSnake(s string) string {
+	var result string
+	for i, r := range s {
+		if unicode.IsUpper(r) {
+			if i > 0 {
+				result += "_"
+			}
+			result += strings.ToLower(string(r))
+		} else {
+			result += string(r)
+		}
+	}
+	return result
+}

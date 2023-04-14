@@ -1,0 +1,19 @@
+package: github.com/deepmap/oapi-codegen/test
+generate:
+  # gin-server: true
+  # strict-server: true
+  # client: true
+  models: true
+# output-options:
+# response-type-suffix: Response
+
+output-dir:
+  types-dir: ./types
+  svc-dir: ./svc
+  logic-dir: ./logic
+  handler-dir: ./handler
+  routes-dir: ./routes
+  code-dir: ./code
+  response-dir: ./response
+  middleware-dir: ./middleware
+output: api-client.go

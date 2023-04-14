@@ -1,0 +1,28 @@
+package {{.PkgName}}
+
+import (
+	"context"
+	"github.com/gin-gonic/gin"
+	{{.ImportPkgName}}
+)
+
+type {{.OperationId}}Logic struct {
+	ctx    context.Context
+	ginCtx *gin.Context
+	svcCtx *svc.ServiceContext
+}
+
+func New{{.OperationId}}Logic(ginCtx *gin.Context, serviceContext *svc.ServiceContext) {{.OperationId}}Logic {
+	return {{.OperationId}}Logic{
+		ctx: context.Background(),
+		ginCtx: ginCtx,
+		svcCtx:  serviceContext,
+	}
+}
+
+// {{.OperationId}} {{.Summary }}
+func (l *{{.OperationId}}Logic) {{.OperationId}}({{if .BodyRequired}}req {{.ReqName}}{{end}}) ({{if (len .Responses)}}resp {{.RespName}}, {{end}} err error) {
+	// todo: add your logic here and delete this line
+
+	return
+}

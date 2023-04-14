@@ -221,7 +221,11 @@ type OperationDefinition struct {
 	Summary             string                  // Summary string from Swagger, used to generate a comment
 	Method              string                  // GET, POST, DELETE, etc.
 	Path                string                  // The Swagger path for the operation, like /resource/{id}
-	Spec                *openapi3.Operation
+	Spec                *openapi3.Operation     //
+	ExtGroup            string                  // 路由所属组
+	ExtMiddleware       []string                // 路由用到的中间件名称
+	PkgName             string                  // 包名
+	ImportPackages      []string                // 需要导入的 types logic 路径
 }
 
 // Params returns the list of all parameters except Path parameters. Path parameters
@@ -483,8 +487,10 @@ func FilterParameterDefinitionByType(params []ParameterDefinition, in string) []
 }
 
 // OperationDefinitions returns all operations for a swagger definition.
-func OperationDefinitions(swagger *openapi3.T) ([]OperationDefinition, error) {
-	var operations []OperationDefinition
+func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition, error) {
+	// var operations []OperationDefinition
+
+	var groupMapOperations = make(map[string][]OperationDefinition, 0)
 
 	for _, requestPath := range SortedPathsKeys(swagger.Paths) {
 		pathItem := swagger.Paths[requestPath]
@@ -545,6 +551,16 @@ func OperationDefinitions(swagger *openapi3.T) ([]OperationDefinition, error) {
 				return nil, fmt.Errorf("error generating response definitions: %w", err)
 			}
 
+			groupName := "outher"
+			middlewareList := []string{}
+			if name, ok := op.Extensions[extGroupName]; ok {
+				groupName = name.(string)
+			}
+			if name, ok := op.Extensions[extMiddleware]; ok {
+				middleware := name.(string)
+				middlewareList = strings.Split(middleware, ",")
+			}
+
 			opDef := OperationDefinition{
 				PathParams:   pathParams,
 				HeaderParams: FilterParameterDefinitionByType(allParams, "header"),
@@ -559,6 +575,8 @@ func OperationDefinitions(swagger *openapi3.T) ([]OperationDefinition, error) {
 				Bodies:          bodyDefinitions,
 				Responses:       responseDefinitions,
 				TypeDefinitions: typeDefinitions,
+				ExtGroup:        groupName,
+				ExtMiddleware:   middlewareList,
 			}
 
 			// check for overrides of SecurityDefinitions.
@@ -582,10 +600,10 @@ func OperationDefinitions(swagger *openapi3.T) ([]OperationDefinition, error) {
 			// Generate all the type definitions needed for this operation
 			opDef.TypeDefinitions = append(opDef.TypeDefinitions, GenerateTypeDefsForOperation(opDef)...)
 
-			operations = append(operations, opDef)
+			groupMapOperations[opDef.ExtGroup] = append(groupMapOperations[opDef.ExtGroup], opDef)
 		}
 	}
-	return operations, nil
+	return groupMapOperations, nil
 }
 
 func generateDefaultOperationID(opName string, requestPath string) (string, error) {
@@ -965,6 +983,5 @@ func GenerateTemplates(templates []string, t *template.Template, ops interface{}
 		}
 		generatedTemplates = append(generatedTemplates, buf.String())
 	}
-
 	return strings.Join(generatedTemplates, "\n"), nil
 }

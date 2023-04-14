@@ -19,6 +19,8 @@ const (
 	extEnumVarNames      = "x-enum-varnames"
 	extEnumNames         = "x-enumNames"
 	extDeprecationReason = "x-deprecated-reason"
+	extGroupName         = "x-group"      // 路由所属组，如：`x-group: admin`
+	extMiddleware        = "x-middleware" // 路由用到的中间件，如 `x-middleware: "auth,rate_limit"`
 )
 
 func extString(extPropValue interface{}) (string, error) {

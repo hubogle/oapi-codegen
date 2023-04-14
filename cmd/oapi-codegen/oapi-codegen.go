@@ -261,19 +261,18 @@ func main() {
 		errExit("error loading swagger spec in %s\n: %s", flag.Arg(0), err)
 	}
 
-	code, err := codegen.Generate(swagger, opts.Configuration)
+	_, err = codegen.Generate(swagger, opts.Configuration)
 	if err != nil {
 		errExit("error generating code: %s\n", err)
 	}
-
-	if opts.OutputFile != "" {
-		err = os.WriteFile(opts.OutputFile, []byte(code), 0644)
-		if err != nil {
-			errExit("error writing generated code to file: %s\n", err)
-		}
-	} else {
-		fmt.Print(code)
-	}
+	// if opts.OutputFile != "" {
+	// 	err = os.WriteFile(opts.OutputFile, []byte(code), 0644)
+	// 	if err != nil {
+	// 		errExit("error writing generated code to file: %s\n", err)
+	// 	}
+	// } else {
+	// 	fmt.Print(code)
+	// }
 }
 
 func loadTemplateOverrides(templatesDir string) (map[string]string, error) {

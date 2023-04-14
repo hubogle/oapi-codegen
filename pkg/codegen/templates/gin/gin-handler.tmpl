@@ -1,0 +1,22 @@
+package {{.PkgName}}
+
+import (
+	{{.ImportPkgName}}
+
+    "github.com/gin-gonic/gin"
+)
+
+// {{.OperationId}} {{.Summary }}
+// {{.Path}}
+func {{.OperationId}}Handler(svcCtx *svc.ServiceContext) gin.HandlerFunc {
+    return func(c *gin.Context) {
+        {{if .BodyRequired}}
+            var req {{.ReqName}}
+            {{.ShouldBindStr}}
+        {{end}}
+
+        logic := {{.PkgName}}.New{{.OperationId}}Logic(c, svcCtx)
+        {{if (len .Responses)}}resp, {{end}}err := logic.{{.OperationId}}({{if .BodyRequired}}req{{end}})
+        response.HandleResponse(c, {{if (len .Responses)}}resp{{else}}nil{{end}}, err)
+    }
+}

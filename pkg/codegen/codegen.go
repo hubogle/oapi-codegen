@@ -20,11 +20,13 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"path"
 	"runtime/debug"
 	"sort"
 	"strings"
 	"text/template"
 
+	"github.com/deepmap/oapi-codegen/pkg/util"
 	"github.com/getkin/kin-openapi/openapi3"
 	"golang.org/x/tools/imports"
 )
@@ -138,207 +140,307 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 		}
 	}
 
-	ops, err := OperationDefinitions(spec)
+	groupOps, err := OperationDefinitions(spec)
 	if err != nil {
 		return "", fmt.Errorf("error creating operation definitions: %w", err)
 	}
+	// TODO: handler，logic，routes，types，middleware 四个文件夹，内容按照 group 进行 进行分组
+	middlewareMap := make(map[string]struct{})
+	groupNameList := []string{}
+	for groupName, ops := range groupOps {
 
-	xGoTypeImports, err := OperationImports(ops)
-	if err != nil {
-		return "", fmt.Errorf("error getting operation imports: %w", err)
-	}
-
-	var typeDefinitions, constantDefinitions string
-	if opts.Generate.Models {
-		typeDefinitions, err = GenerateTypeDefinitions(t, spec, ops, opts.OutputOptions.ExcludeSchemas)
-		if err != nil {
-			return "", fmt.Errorf("error generating type definitions: %w", err)
-		}
-
-		constantDefinitions, err = GenerateConstants(t, ops)
-		if err != nil {
-			return "", fmt.Errorf("error generating constants: %w", err)
-		}
-
-		imprts, err := GetTypeDefinitionsImports(spec, opts.OutputOptions.ExcludeSchemas)
-		if err != nil {
-			return "", fmt.Errorf("error getting type definition imports: %w", err)
-		}
-		MergeImports(xGoTypeImports, imprts)
-	}
-
-	var echoServerOut string
-	if opts.Generate.EchoServer {
-		echoServerOut, err = GenerateEchoServer(t, ops)
-		if err != nil {
-			return "", fmt.Errorf("error generating Go handlers for Paths: %w", err)
-		}
-	}
-
-	var chiServerOut string
-	if opts.Generate.ChiServer {
-		chiServerOut, err = GenerateChiServer(t, ops)
-		if err != nil {
-			return "", fmt.Errorf("error generating Go handlers for Paths: %w", err)
-		}
-	}
-
-	var ginServerOut string
-	if opts.Generate.GinServer {
-		ginServerOut, err = GenerateGinServer(t, ops)
-		if err != nil {
-			return "", fmt.Errorf("error generating Go handlers for Paths: %w", err)
-		}
-	}
-
-	var gorillaServerOut string
-	if opts.Generate.GorillaServer {
-		gorillaServerOut, err = GenerateGorillaServer(t, ops)
-		if err != nil {
-			return "", fmt.Errorf("error generating Go handlers for Paths: %w", err)
-		}
-	}
-
-	var strictServerOut string
-	if opts.Generate.Strict {
-		var responses []ResponseDefinition
-		if spec.Components != nil {
-			responses, err = GenerateResponseDefinitions("", spec.Components.Responses)
+		// models 整体生成一个文件
+		var typeDefinitions, constantDefinitions string
+		var xGoTypeImports map[string]goImport
+		groupNameList = append(groupNameList, groupName)
+		if opts.Generate.Models {
+			xGoTypeImports, err := OperationImports(ops)
 			if err != nil {
-				return "", fmt.Errorf("error generation response definitions for schema: %w", err)
+				return "", fmt.Errorf("error getting operation imports: %w", err)
+			}
+			typeDefinitions, err = GenerateTypeDefinitions(t, spec, ops, opts.OutputOptions.ExcludeSchemas)
+			if err != nil {
+				return "", fmt.Errorf("error generating type definitions: %w", err)
+			}
+
+			constantDefinitions, err = GenerateConstants(t, ops)
+			if err != nil {
+				return "", fmt.Errorf("error generating constants: %w", err)
+			}
+
+			improts, err := GetTypeDefinitionsImports(spec, opts.OutputOptions.ExcludeSchemas)
+			if err != nil {
+				return "", fmt.Errorf("error getting type definition imports: %w", err)
+			}
+			MergeImports(xGoTypeImports, improts)
+		}
+
+		// 输出 types 定义的字段
+		if opts.Generate.Models && opts.OutputDirOptions.TypesDir != "" {
+			externalImports := append(importMapping.GoImports(), importMap(xGoTypeImports).GoImports()...)
+			importsOut, err := GenerateImports(t, externalImports, groupName)
+			if err != nil {
+				return "", err
+			}
+			err = OutputFile(groupName, opts.OutputDirOptions.TypesDir, "types.go", []string{importsOut, constantDefinitions, typeDefinitions})
+			if err != nil {
+				return "", err
 			}
 		}
-		strictServerResponses, err := GenerateStrictResponses(t, responses)
-		if err != nil {
-			return "", fmt.Errorf("error generation response definitions for schema: %w", err)
+		// 输出定义的 Code 代码
+		if opts.OutputDirOptions.CodeDir != "" {
+			ginCodeOut, _ := GenerateGinCode(t)
+			err = OutputFile("", opts.OutputDirOptions.CodeDir, "code.go", []string{ginCodeOut})
+			if err != nil {
+				return "", err
+			}
 		}
-		strictServerOut, err = GenerateStrictServer(t, ops, opts)
-		if err != nil {
-			return "", fmt.Errorf("error generating Go handlers for Paths: %w", err)
+
+		// 输出 routes 代码定义
+		if opts.OutputDirOptions.RoutesDir != "" {
+			if err = OutPutRoutesCode(groupName, ops, opts, t); err != nil {
+				return "", err
+			}
 		}
-		strictServerOut = strictServerResponses + strictServerOut
+
+		// 遍历输出 logic handler 模版文件
+		for _, op := range ops {
+			// 输出 logic 资源定义
+			if err = OutPutLogicCode(groupName, op, opts, t); err != nil {
+				return "", err
+			}
+
+			// 输出 handler 资源定义
+			if err = OutPutHandlerCode(groupName, op, opts, t); err != nil {
+				return "", err
+			}
+			for _, name := range op.ExtMiddleware {
+				middlewareMap[name] = struct{}{}
+			}
+		}
+
+	}
+	// 输出定义的 Response 代码
+	if opts.OutputDirOptions.ResponseDir != "" {
+		importPkgName := `"` + path.Join(opts.PackageName, opts.OutputDirOptions.CodeDir) + `"`
+		responseOp := GinOperation{
+			ImportPkgName: importPkgName,
+		}
+		ginResponseOut, _ := GenerateGinResponse(t, &responseOp)
+		err = OutputFile("", opts.OutputDirOptions.ResponseDir, "response.go", []string{ginResponseOut})
+		if err != nil {
+			return "", err
+		}
+	}
+	// 输出 svc 资源定义
+	if opts.OutputDirOptions.SvcDir != "" {
+		ginSvcOut, err := GenerateGinSvc(t)
+		if err != nil {
+			return "", fmt.Errorf("error generating svc for Paths: %w", err)
+		}
+		err = OutputFile("", opts.OutputDirOptions.SvcDir, "servicecontext.go", []string{ginSvcOut})
+		if err != nil {
+			return "", err
+		}
+	}
+	// 输出 middleware 代码
+	if err = OutPutMiddlewareCode(middlewareMap, opts, t); err != nil {
+		return "", err
 	}
 
-	var clientOut string
-	if opts.Generate.Client {
-		clientOut, err = GenerateClient(t, ops)
-		if err != nil {
-			return "", fmt.Errorf("error generating client: %w", err)
-		}
+	// 输出主路由定义代码
+	if err = OutPutRoutesSetupCode(groupNameList, opts, t); err != nil {
+		return "", err
 	}
 
-	var clientWithResponsesOut string
-	if opts.Generate.Client {
-		clientWithResponsesOut, err = GenerateClientWithResponses(t, ops)
+	return "", nil
+}
+
+// OutPutMiddlewareCode 中间件逻辑生成
+func OutPutMiddlewareCode(middlewareMap map[string]struct{}, opts Configuration, t *template.Template) error {
+	for name := range middlewareMap {
+		if name == "" {
+			continue
+		}
+		middlewareOut, err := GenerateGinMiddleware(t, name)
 		if err != nil {
-			return "", fmt.Errorf("error generating client with responses: %w", err)
+			return err
+		}
+		fileName := fmt.Sprintf("%s_middleware.go", name)
+		err = OutputFile("", opts.OutputDirOptions.MiddlewareDir, fileName, []string{middlewareOut})
+		if err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
-	var inlinedSpec string
-	if opts.Generate.EmbeddedSpec {
-		inlinedSpec, err = GenerateInlinedSpec(t, importMapping, spec)
-		if err != nil {
-			return "", fmt.Errorf("error generating Go handlers for Paths: %w", err)
-		}
+// OutPutRoutesCode 构造生成 routes 的逻辑代码
+func OutPutRoutesCode(groupName string, ops []OperationDefinition, opts Configuration, t *template.Template) error {
+	importPkgName := ""
+	importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.SvcDir) + `"` + "\n"
+	importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.MiddlewareDir) + `"` + "\n"
+	importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.HandlerDir, groupName) + `"` + "\n"
+	routesOp := GinRoutesOperation{
+		Ops:           ops,
+		PkgName:       groupName,
+		ImportPkgName: importPkgName,
+	}
+	routesOut, err := GenerateGinRoutes(t, &routesOp)
+	if err != nil {
+		return fmt.Errorf("error generating logic for Paths: %w", err)
+	}
+	fileName := fmt.Sprintf("%s.go", groupName)
+	err = OutputFile(groupName, opts.OutputDirOptions.RoutesDir, fileName, []string{routesOut})
+	if err != nil {
+		return err
 	}
 
+	return nil
+}
+
+// OutPutRoutesSetupCode 构造生成 routes setup 代码
+func OutPutRoutesSetupCode(groupNameList []string, opts Configuration, t *template.Template) error {
+
+	importPkgName := ""
+	for _, groupName := range groupNameList {
+		importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.RoutesDir, groupName) + `"` + "\n"
+	}
+	routesSetupOp := GinRoutesOperation{
+		// PkgName:
+		ImportPkgName: importPkgName,
+		GroupNameList: groupNameList,
+	}
+	routesSetupOut, _ := GenerateGinRoutesSetup(t, &routesSetupOp)
+	err := OutputFile("", opts.OutputDirOptions.RoutesDir, "routes.go", []string{routesSetupOut})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// OutPutLogicCode 构造生成 logic 的逻辑代码
+func OutPutLogicCode(groupName string, op OperationDefinition, opts Configuration, t *template.Template) error {
+	if opts.OutputDirOptions.LogicDir == "" {
+		return nil
+	}
+	var reqName = ""
+	var respName = ""
+	var importPkgName = ""
+	if len(op.Bodies) > 0 {
+		// TODO 当参数有多个 params 和 body 时需要解析
+		if op.Bodies[0].Schema.RefType != "" { // 当 yaml 没用通过 $ref 引用定义变量时
+			reqName = fmt.Sprintf("*%s.%s", groupName, op.Bodies[0].Schema.RefType)
+		} else {
+			reqName = fmt.Sprintf("*%s.%s", groupName, op.Bodies[0].Schema.GoType)
+		}
+	}
+	if len(op.Responses) > 0 {
+		// TODO 只用状态码 200 定义的
+		if op.Responses[0].Contents[0].Schema.RefType != "" {
+			respName = fmt.Sprintf("%s.%s", groupName, op.Responses[0].Contents[0].Schema.RefType)
+		} else {
+			respName = fmt.Sprintf("%s.%s", groupName, op.Responses[0].Contents[0].Schema.GoType)
+		}
+	}
+	importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.SvcDir) + `"`
+	if reqName != "" && respName != "" {
+		importPkgName += "\n"
+		importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.TypesDir, groupName) + `"`
+	}
+	logicOp := GinOperation{
+		OperationDefinition: op,
+		PkgName:             groupName,
+		ImportPkgName:       importPkgName,
+		ReqName:             reqName,
+		RespName:            respName,
+	}
+	logicOut, err := GenerateGinLogic(t, &logicOp)
+	if err != nil {
+		return fmt.Errorf("error generating logic for Paths: %w", err)
+	}
+	fileName := fmt.Sprintf("%s_logic.go", CamelToSnake(op.OperationId))
+	err = OutputFile(groupName, opts.OutputDirOptions.LogicDir, fileName, []string{logicOut})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// OutPutHandlerCode 构造生成 handler 逻辑代码
+func OutPutHandlerCode(groupName string, op OperationDefinition, opts Configuration, t *template.Template) error {
+	if opts.OutputDirOptions.HandlerDir == "" {
+		return nil
+	}
+	var reqName = ""
+	var importPkgName = ""
+	var shouldBindStr = ""
+	importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.SvcDir) + `"`
+	if len(op.Bodies) > 0 {
+		// TODO 当参数有多个 params 和 body 时需要解析
+		if op.Bodies[0].Schema.RefType != "" { // 当 yaml 没用通过 $ref 引用定义变量时
+			reqName = fmt.Sprintf("*%sType.%s", groupName, op.Bodies[0].Schema.RefType)
+		} else {
+			reqName = fmt.Sprintf("*%sType.%s", groupName, op.Bodies[0].Schema.GoType)
+		}
+		importPkgName += "\n"
+		importPkgName += fmt.Sprintf("%sType ", groupName)
+		importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.TypesDir, groupName) + `"`
+	}
+	// TODO 从参数解析需要用哪种方式绑定参数 ShouldBindUri, ShouldBindJSON
+	for _, parse := range op.Bodies {
+		if parse.ContentType == "application/json" {
+			shouldBindStr += fmt.Sprintf(`    if err := c.%s(&%s); err != nil {
+				response.HandlerParamsResponse(c, err)
+				return
+			}`, "ShouldBindJSON", "req") + "\n"
+		}
+	}
+	handlerOp := GinOperation{
+		OperationDefinition: op,
+		PkgName:             groupName,
+		ShouldBindStr:       shouldBindStr,
+		ImportPkgName:       importPkgName,
+		ReqName:             reqName,
+	}
+	handlerOut, err := GenerateGinHandler(t, &handlerOp)
+	if err != nil {
+		return fmt.Errorf("error generating handler for Paths: %w", err)
+	}
+	fileName := fmt.Sprintf("%s_handler.go", CamelToSnake(op.OperationId))
+	err = OutputFile(groupName, opts.OutputDirOptions.HandlerDir, fileName, []string{handlerOut})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// OutputFile 输出生成的代码文件
+func OutputFile(groupName string, dirName string, fileName string, contextList []string) error {
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-
-	externalImports := append(importMapping.GoImports(), importMap(xGoTypeImports).GoImports()...)
-	importsOut, err := GenerateImports(t, externalImports, opts.PackageName)
-	if err != nil {
-		return "", fmt.Errorf("error generating imports: %w", err)
+	fp, created, err := util.MaybeCreateFile(dirName, groupName, fileName)
+	if err != nil || !created {
+		return err
 	}
-
-	_, err = w.WriteString(importsOut)
-	if err != nil {
-		return "", fmt.Errorf("error writing imports: %w", err)
-	}
-
-	_, err = w.WriteString(constantDefinitions)
-	if err != nil {
-		return "", fmt.Errorf("error writing constants: %w", err)
-	}
-
-	_, err = w.WriteString(typeDefinitions)
-	if err != nil {
-		return "", fmt.Errorf("error writing type definitions: %w", err)
-	}
-
-	if opts.Generate.Client {
-		_, err = w.WriteString(clientOut)
+	for _, context := range contextList {
+		_, err = w.WriteString(context)
 		if err != nil {
-			return "", fmt.Errorf("error writing client: %w", err)
-		}
-		_, err = w.WriteString(clientWithResponsesOut)
-		if err != nil {
-			return "", fmt.Errorf("error writing client: %w", err)
+			return err
 		}
 	}
-
-	if opts.Generate.EchoServer {
-		_, err = w.WriteString(echoServerOut)
-		if err != nil {
-			return "", fmt.Errorf("error writing server path handlers: %w", err)
-		}
-	}
-
-	if opts.Generate.ChiServer {
-		_, err = w.WriteString(chiServerOut)
-		if err != nil {
-			return "", fmt.Errorf("error writing server path handlers: %w", err)
-		}
-	}
-
-	if opts.Generate.GinServer {
-		_, err = w.WriteString(ginServerOut)
-		if err != nil {
-			return "", fmt.Errorf("error writing server path handlers: %w", err)
-		}
-	}
-
-	if opts.Generate.GorillaServer {
-		_, err = w.WriteString(gorillaServerOut)
-		if err != nil {
-			return "", fmt.Errorf("error writing server path handlers: %w", err)
-		}
-	}
-
-	if opts.Generate.Strict {
-		_, err = w.WriteString(strictServerOut)
-		if err != nil {
-			return "", fmt.Errorf("error writing server path handlers: %w", err)
-		}
-	}
-
-	if opts.Generate.EmbeddedSpec {
-		_, err = w.WriteString(inlinedSpec)
-		if err != nil {
-			return "", fmt.Errorf("error writing inlined spec: %w", err)
-		}
-	}
-
 	err = w.Flush()
 	if err != nil {
-		return "", fmt.Errorf("error flushing output buffer: %w", err)
+		return fmt.Errorf("error flushing output buffer: %w", err)
 	}
-
-	// remove any byte-order-marks which break Go-Code
 	goCode := SanitizeCode(buf.String())
-
-	// The generation code produces unindented horrors. Use the Go Imports
-	// to make it all pretty.
-	if opts.OutputOptions.SkipFmt {
-		return goCode, nil
-	}
-
-	outBytes, err := imports.Process(opts.PackageName+".go", []byte(goCode), nil)
+	fpath := path.Join(dirName, groupName, fileName)
+	outBytes, err := imports.Process(fpath, []byte(goCode), nil)
 	if err != nil {
-		return "", fmt.Errorf("error formatting Go code %s: %w", goCode, err)
+		return fmt.Errorf("error formatting Go code %s: %w", goCode, err)
 	}
-	return string(outBytes), nil
+	fp.Write(outBytes)
+	return nil
 }
 
 func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []OperationDefinition, excludeSchemas []string) (string, error) {
