@@ -3,6 +3,7 @@ package codegen
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -670,6 +671,19 @@ func GenFieldsFromProperties(props []Property) []string {
 				}
 			}
 		}
+
+		// 若自定义的话， 就不用外部定义的
+		if extension, ok := p.Extensions[extValidate]; ok {
+			if tags, ok := extension.(string); ok {
+				fieldTags["validate"] = tags
+			}
+		} else {
+			validateTags := extValidateTags(p)
+			if len(validateTags) != 0 {
+				fieldTags["validate"] = strings.Join(validateTags, ",")
+			}
+		}
+
 		// Convert the fieldTags map into Go field annotations.
 		keys := SortedStringKeys(fieldTags)
 		tags := make([]string, len(keys))
@@ -680,6 +694,82 @@ func GenFieldsFromProperties(props []Property) []string {
 		fields = append(fields, field)
 	}
 	return fields
+}
+
+// extValidateTags 增加 validator 的字段校验，通过解析 openapi 字段定义的规则
+func extValidateTags(p Property) []string {
+	tags := []string{}
+	if p.Required {
+		tags = append(tags, "required")
+	}
+	schema := p.Schema.OAPISchema
+	t := schema.Type
+
+	switch t {
+	case "array": // 支持 uniqueItems, minItems, maxItems
+		if schema.UniqueItems {
+			tags = append(tags, "unique")
+		}
+		if schema.MinItems != 0 {
+			tags = append(tags, "min="+strconv.Itoa(int(schema.MinItems)))
+		}
+		if schema.MaxItems != nil {
+			tags = append(tags, "max="+strconv.Itoa(int(*schema.MaxItems)))
+		}
+		if schema.Items != nil { // 校验数组内的值
+			tags = append(tags, "dive")
+		}
+	case "number", "integer":
+		if schema.Max != nil {
+			var maxVal string
+			if t == "integer" {
+				maxVal = strconv.Itoa(int(*schema.Max))
+			} else {
+				maxVal = strconv.FormatFloat(*schema.Max, 'f', -1, 64)
+			}
+			if schema.ExclusiveMax {
+				tags = append(tags, fmt.Sprintf("lte=%s", maxVal))
+			} else {
+				tags = append(tags, fmt.Sprintf("lt=%s", maxVal))
+			}
+		}
+		if schema.Min != nil {
+			var minVar string
+			if t == "integer" {
+				minVar = strconv.Itoa(int(*schema.Min))
+			} else {
+				minVar = strconv.FormatFloat(*schema.Min, 'f', -1, 64)
+			}
+			if schema.ExclusiveMin {
+				tags = append(tags, fmt.Sprintf("gte=%s", minVar))
+			} else {
+				tags = append(tags, fmt.Sprintf("gt=%s", minVar))
+			}
+		}
+		if schema.Enum != nil {
+			enumList := []string{}
+			for _, v := range p.Schema.EnumValues {
+				enumList = append(enumList, v)
+			}
+			tags = append(tags, fmt.Sprintf("oneof=%s", strings.Join(enumList, " ")))
+		}
+	case "string": // 支持 minLength、maxLength、default、pattern, enum
+		if schema.MaxLength != nil {
+			tags = append(tags, fmt.Sprintf("max=%d", *schema.MaxLength))
+		}
+		if schema.MinLength != 0 {
+			tags = append(tags, fmt.Sprintf("min=%d", schema.MinLength))
+		}
+		if schema.Enum != nil {
+			enumList := []string{}
+			for _, v := range p.Schema.EnumValues {
+				enumList = append(enumList, v)
+			}
+			tags = append(tags, fmt.Sprintf("oneof=%s", strings.Join(enumList, " ")))
+		}
+	default:
+	}
+	return tags
 }
 
 func additionalPropertiesType(schema Schema) string {

@@ -21,6 +21,7 @@ const (
 	extDeprecationReason = "x-deprecated-reason"
 	extGroupName         = "x-group"      // 路由所属组，如：`x-group: admin`
 	extMiddleware        = "x-middleware" // 路由用到的中间件，如 `x-middleware: "auth,rate_limit"`
+	extValidate          = "x-validate"
 )
 
 func extString(extPropValue interface{}) (string, error) {
