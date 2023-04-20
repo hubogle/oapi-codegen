@@ -20,6 +20,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
 	"runtime/debug"
 	"sort"
@@ -182,15 +183,9 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 			if err != nil {
 				return "", err
 			}
+			fpath := path.Join(opts.OutputDirOptions.TypesDir, groupName, "types.go")
+			os.Remove(fpath)
 			err = OutputFile(groupName, opts.OutputDirOptions.TypesDir, "types.go", []string{importsOut, constantDefinitions, typeDefinitions})
-			if err != nil {
-				return "", err
-			}
-		}
-		// 输出定义的 Code 代码
-		if opts.OutputDirOptions.CodeDir != "" {
-			ginCodeOut, _ := GenerateGinCode(t)
-			err = OutputFile("", opts.OutputDirOptions.CodeDir, "code.go", []string{ginCodeOut})
 			if err != nil {
 				return "", err
 			}
@@ -219,6 +214,14 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 			}
 		}
 
+	}
+	// 输出定义的 Code 代码
+	if opts.OutputDirOptions.CodeDir != "" {
+		ginCodeOut, _ := GenerateGinCode(t)
+		err = OutputFile("", opts.OutputDirOptions.CodeDir, "code.go", []string{ginCodeOut})
+		if err != nil {
+			return "", err
+		}
 	}
 	// 输出定义的 Response 代码
 	if opts.OutputDirOptions.ResponseDir != "" {
@@ -291,6 +294,8 @@ func OutPutRoutesCode(groupName string, ops []OperationDefinition, opts Configur
 		return fmt.Errorf("error generating logic for Paths: %w", err)
 	}
 	fileName := fmt.Sprintf("%s.go", groupName)
+	fpath := path.Join(opts.OutputDirOptions.RoutesDir, groupName, fileName)
+	os.Remove(fpath)
 	err = OutputFile(groupName, opts.OutputDirOptions.RoutesDir, fileName, []string{routesOut})
 	if err != nil {
 		return err
@@ -312,6 +317,8 @@ func OutPutRoutesSetupCode(groupNameList []string, opts Configuration, t *templa
 		GroupNameList: groupNameList,
 	}
 	routesSetupOut, _ := GenerateGinRoutesSetup(t, &routesSetupOp)
+	fpath := path.Join(opts.OutputDirOptions.RoutesDir, "", "routes.go")
+	os.Remove(fpath)
 	err := OutputFile("", opts.OutputDirOptions.RoutesDir, "routes.go", []string{routesSetupOut})
 	if err != nil {
 		return err
@@ -386,6 +393,8 @@ func OutPutHandlerCode(groupName string, op OperationDefinition, opts Configurat
 		importPkgName += "\n"
 		importPkgName += fmt.Sprintf("%sType ", groupName)
 		importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.TypesDir, groupName) + `"`
+		importPkgName += "\n"
+		importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.ResponseDir) + `"`
 	}
 	// TODO 从参数解析需要用哪种方式绑定参数 ShouldBindUri, ShouldBindJSON
 	for _, parse := range op.Bodies {

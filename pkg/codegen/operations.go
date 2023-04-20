@@ -546,10 +546,11 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 				return nil, fmt.Errorf("error generating body definitions: %w", err)
 			}
 
-			responseDefinitions, err := GenerateResponseDefinitions(op.OperationID, op.Responses)
+			responseDefinitions, respDefinitions, err := GenerateResponseDefinitions(op.OperationID, op.Responses)
 			if err != nil {
 				return nil, fmt.Errorf("error generating response definitions: %w", err)
 			}
+			typeDefinitions = append(typeDefinitions, respDefinitions...)
 
 			groupName := "outher"
 			middlewareList := []string{}
@@ -725,12 +726,17 @@ func GenerateBodyDefinitions(operationID string, bodyOrRef *openapi3.RequestBody
 	return bodyDefinitions, typeDefinitions, nil
 }
 
-func GenerateResponseDefinitions(operationID string, responses openapi3.Responses) ([]ResponseDefinition, error) {
+func GenerateResponseDefinitions(operationID string, responses openapi3.Responses) ([]ResponseDefinition, []TypeDefinition, error) {
 	var responseDefinitions []ResponseDefinition
+	var typeDefinitions []TypeDefinition
 	// do not let multiple status codes ref to same response, it will break the type switch
 	refSet := make(map[string]struct{})
 
 	for _, statusCode := range SortedResponsesKeys(responses) {
+		// TODO 目前返回值只生成状态码 200 的
+		if statusCode != "200" {
+			continue
+		}
 		responseOrRef := responses[statusCode]
 		if responseOrRef == nil {
 			continue
@@ -761,8 +767,17 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 
 			responseTypeName := operationID + statusCode + tag + "Response"
 			contentSchema, err := GenerateGoSchema(content.Schema, []string{responseTypeName})
+			if contentSchema.RefType == "" {
+				responseTypeName = operationID + "Response"
+				td := TypeDefinition{
+					TypeName: responseTypeName,
+					Schema:   contentSchema,
+				}
+				typeDefinitions = append(typeDefinitions, td)
+				contentSchema.RefType = responseTypeName
+			}
 			if err != nil {
-				return nil, fmt.Errorf("error generating request body definition: %w", err)
+				return nil, nil, fmt.Errorf("error generating request body definition: %w", err)
 			}
 
 			rcd := ResponseContentDefinition{
@@ -778,7 +793,7 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 			header := response.Headers[headerName]
 			contentSchema, err := GenerateGoSchema(header.Value.Schema, []string{})
 			if err != nil {
-				return nil, fmt.Errorf("error generating response header definition: %w", err)
+				return nil, nil, fmt.Errorf("error generating response header definition: %w", err)
 			}
 			headerDefinition := ResponseHeaderDefinition{Name: headerName, GoName: SchemaNameToTypeName(headerName), Schema: contentSchema}
 			responseHeaderDefinitions = append(responseHeaderDefinitions, headerDefinition)
@@ -796,7 +811,7 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 			// Convert the reference path to Go type
 			refType, err := RefPathToGoType(responseOrRef.Ref)
 			if err != nil {
-				return nil, fmt.Errorf("error turning reference (%s) into a Go type: %w", responseOrRef.Ref, err)
+				return nil, nil, fmt.Errorf("error turning reference (%s) into a Go type: %w", responseOrRef.Ref, err)
 			}
 			// Check if this ref is already used by another response definition. If not use the ref
 			// If we let multiple response definitions alias to same response it will break the type switch
@@ -809,7 +824,7 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 		responseDefinitions = append(responseDefinitions, rd)
 	}
 
-	return responseDefinitions, nil
+	return responseDefinitions, typeDefinitions, nil
 }
 
 func GenerateTypeDefsForOperation(op OperationDefinition) []TypeDefinition {

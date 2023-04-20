@@ -561,19 +561,13 @@ func oapiSchemaToGoType(schema *openapi3.Schema, path []string, outSchema *Schem
 		switch f {
 		case "byte":
 			outSchema.GoType = "[]byte"
-		case "email":
-			outSchema.GoType = "openapi_types.Email"
-		case "date":
-			outSchema.GoType = "openapi_types.Date"
 		case "date-time":
 			outSchema.GoType = "time.Time"
 		case "json":
 			outSchema.GoType = "json.RawMessage"
 			outSchema.SkipOptionalPointer = true
-		case "uuid":
-			outSchema.GoType = "openapi_types.UUID"
 		case "binary":
-			outSchema.GoType = "openapi_types.File"
+			outSchema.GoType = "multipart.FileHeader"
 		default:
 			// All unrecognized formats are simply a regular string.
 			outSchema.GoType = "string"
