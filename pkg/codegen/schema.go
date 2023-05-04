@@ -654,6 +654,9 @@ func GenFieldsFromProperties(props []Property) []string {
 				fieldTags["form"] = p.JsonFieldName + ",omitempty"
 			}
 		}
+		if _, ok := p.Extensions["path"]; ok {
+			fieldTags["uri"] = p.JsonFieldName
+		}
 
 		// Support x-go-json-ignore
 		if _, ok := p.Extensions[extPropGoJsonIgnore]; ok {
@@ -703,6 +706,9 @@ func extValidateTags(p Property) []string {
 		tags = append(tags, "required")
 	}
 	schema := p.Schema.OAPISchema
+	if schema == nil {
+		return tags
+	}
 	t := schema.Type
 
 	switch t {

@@ -87,7 +87,9 @@ func (pd *ParameterDefinition) Style() string {
 	if style == "" {
 		in := pd.Spec.In
 		switch in {
-		case "path", "header":
+		case "path":
+			return "path"
+		case "header":
 			return "simple"
 		case "query", "cookie":
 			return "form"
@@ -540,6 +542,30 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 			if err != nil {
 				return nil, err
 			}
+			// if op.Parameters != nil {
+			// 	for _, param := range op.Parameters { // 遍历 get query
+			// 		if param.Value.In == "query" {
+			// 			param.Value.Schema.Value.Extensions["query"] = true
+			// 		}
+			// 	}
+			// }
+			if op.RequestBody != nil {
+				if _, ok := op.RequestBody.Value.Content["application/json"]; ok {
+					prop := op.RequestBody.Value.Content["application/json"].Schema.Value.Properties
+					if prop != nil {
+						for _, param := range op.Parameters {
+							name := param.Value.Name
+							if param.Value.In == "path" {
+								param.Value.Schema.Value.Extensions["path"] = true
+							}
+							if param.Value.In == "query" {
+								param.Value.Schema.Value.Extensions["query"] = true
+							}
+							prop[name] = param.Value.Schema
+						}
+					}
+				}
+			}
 
 			bodyDefinitions, typeDefinitions, err := GenerateBodyDefinitions(op.OperationID, op.RequestBody)
 			if err != nil {
@@ -661,8 +687,14 @@ func GenerateBodyDefinitions(operationID string, bodyOrRef *openapi3.RequestBody
 			bodyDefinitions = append(bodyDefinitions, bd)
 			continue
 		}
-
-		bodyTypeName := operationID + tag + "Body"
+		bodyTypeName := ""
+		if bodyOrRef.Ref == "" {
+			bodyTypeName = operationID + tag + "Body"
+		} else {
+			ref := bodyOrRef.Ref
+			refList := strings.Split(ref, "/")
+			bodyTypeName = ToCamelCase(refList[len(refList)-1])
+		}
 		bodySchema, err := GenerateGoSchema(content.Schema, []string{bodyTypeName})
 		if err != nil {
 			return nil, nil, fmt.Errorf("error generating request body definition: %w", err)
@@ -692,6 +724,13 @@ func GenerateBodyDefinitions(operationID string, bodyOrRef *openapi3.RequestBody
 				// Regenerate the Golang struct adding the new form tag.
 				bodySchema.GoType = GenStructFromSchema(bodySchema)
 			}
+			// for i := range bodySchema.Properties {
+			// 	for key, value := range bodySchema.Properties[i].Extensions {
+			// 		if key == "path" && value == true {
+			// 			bodySchema.Properties[i].NeedsPathTag = true
+			// 		}
+			// 	}
+			// }
 
 			td := TypeDefinition{
 				TypeName: bodyTypeName,
@@ -764,8 +803,15 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 				responseContentDefinitions = append(responseContentDefinitions, rcd)
 				continue
 			}
+			responseTypeName := ""
+			if content.Schema.Ref == "" {
+				responseTypeName = operationID + statusCode + tag + "Response"
+			} else {
+				refList := strings.Split(content.Schema.Ref, "/")
+				responseTypeName = ToCamelCase(refList[len(refList)-1])
+				content.Schema.Ref = "" // 设置为空可以在 goType 生成代码
+			}
 
-			responseTypeName := operationID + statusCode + tag + "Response"
 			contentSchema, err := GenerateGoSchema(content.Schema, []string{responseTypeName})
 			if contentSchema.RefType == "" {
 				responseTypeName = operationID + "Response"

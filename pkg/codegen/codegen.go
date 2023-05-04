@@ -452,6 +452,85 @@ func OutputFile(groupName string, dirName string, fileName string, contextList [
 	return nil
 }
 
+// 检查 type 是否被用到
+func checkParamUse(types *[]TypeDefinition, ops []OperationDefinition) []TypeDefinition {
+	opsMap := map[string]string{}              // 所有使用的 ops
+	typeNameMap := map[string]TypeDefinition{} // 使用 TypeName 映射对应的对象
+	resultTypes := map[string]TypeDefinition{} // 当前 op 用到的 type 对象
+	for _, op := range ops {
+		if op.PathParams != nil {
+			for _, bo := range op.PathParams {
+				_ = bo
+			}
+		}
+		if op.Bodies != nil {
+			for _, bo := range op.Bodies {
+				opsMap[bo.Schema.RefType] = bo.Schema.GoType
+			}
+		}
+		if op.Responses != nil {
+			for _, resp := range op.Responses {
+				if resp.StatusCode == "200" {
+					if strings.HasPrefix(resp.Contents[0].Schema.GoType, "struct {") {
+						for _, pro := range resp.Contents[0].Schema.Properties {
+							opsMap[pro.Schema.GoType] = pro.Schema.GoType
+						}
+					} else {
+						opsMap[resp.Contents[0].Schema.GoType] = resp.Contents[0].Schema.GoType
+					}
+				}
+			}
+		}
+	}
+	for _, typeDef := range *types {
+		typeNameMap[typeDef.TypeName] = typeDef
+	}
+
+	for name := range opsMap {
+		if val, ok := typeNameMap[name]; ok {
+			resultTypes[name] = val
+			if val.Schema.Properties != nil {
+				typeNameList := []string{}
+				for _, pro := range val.Schema.Properties {
+					GetProperties(pro, &typeNameList)
+				}
+				for _, typeName := range typeNameList {
+					if v, ok := typeNameMap[typeName]; ok {
+						resultTypes[typeName] = v
+					}
+				}
+			}
+		}
+	}
+
+	result := make([]TypeDefinition, 0)
+	for _, t := range *types {
+		if _, ok := resultTypes[t.TypeName]; ok {
+			result = append(result, t)
+		}
+
+	}
+	return result
+}
+
+// GetProperties 递归获取字段包含的 properties
+func GetProperties(pro Property, jsonFieldNameList *[]string) {
+	if pro.JsonFieldName != "" {
+		*jsonFieldNameList = append(*jsonFieldNameList, ToCamelCase(pro.Schema.RefType))
+	}
+	if pro.Schema.Properties != nil {
+		for _, subPro := range pro.Schema.Properties {
+			GetProperties(subPro, jsonFieldNameList)
+		}
+	}
+	if pro.Schema.ArrayType != nil {
+		at := pro.Schema.ArrayType
+		if at.GoType != "" {
+			*jsonFieldNameList = append(*jsonFieldNameList, at.GoType)
+		}
+	}
+}
+
 func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []OperationDefinition, excludeSchemas []string) (string, error) {
 	var allTypes []TypeDefinition
 	if swagger.Components != nil {
@@ -477,6 +556,8 @@ func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []Op
 			return "", fmt.Errorf("error generating Go types for component request bodies: %w", err)
 		}
 		allTypes = append(allTypes, bodyTypes...)
+		// 判断 schema 是否被使用，否则的话就不添加
+		allTypes = checkParamUse(&allTypes, ops)
 	}
 
 	// Go through all operations, and add their types to allTypes, so that we can
@@ -723,8 +804,8 @@ func GenerateTypes(t *template.Template, types []TypeDefinition) (string, error)
 				continue
 			}
 			// We want to create an error when we try to define the same type twice.
-			return "", fmt.Errorf("duplicate typename '%s' detected, can't auto-rename, "+
-				"please use x-go-name to specify your own name for one of them", typ.TypeName)
+			// return "", fmt.Errorf("duplicate typename '%s' detected, can't auto-rename, "+
+			// 	"please use x-go-name to specify your own name for one of them", typ.TypeName)
 		}
 
 		m[typ.TypeName] = typ
