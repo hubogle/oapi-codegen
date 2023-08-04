@@ -9,15 +9,3 @@ type {{.TypeName}} {{if .IsAlias}}={{end}} {{.Schema.TypeDecl}}
 {{end}}
 {{end}}
 {{end}}
-
-{{range .}}{{$opid := .OperationId}}
-{{range .Responses}}
-{{range .Contents}}
-{{$contentType := .ContentType -}}
-{{with .TypeDef $opid 200}}
-// {{.TypeName}} defines response for {{$opid}} for {{$contentType}} ContentType.
-type {{.TypeName}} {{if .IsAlias}}={{end}} {{.Schema.TypeDecl}}
-{{end}}
-{{end}}
-{{end}}
-{{end}}

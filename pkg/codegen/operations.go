@@ -90,7 +90,7 @@ func (pd *ParameterDefinition) Style() string {
 		case "path":
 			return "path"
 		case "header":
-			return "simple"
+			return "header"
 		case "query", "cookie":
 			return "form"
 		default:
@@ -230,10 +230,19 @@ type OperationDefinition struct {
 	ImportPackages      []string                // 需要导入的 types logic 路径
 }
 
+// HasParams 判断是否有 params 和 body
+func (o *OperationDefinition) HasParams() bool {
+	if len(o.AllParams()) != 0 {
+		return true
+	}
+	return o.HasBody()
+}
+
 // Params returns the list of all parameters except Path parameters. Path parameters
 // are handled differently from the rest, since they're mandatory.
 func (o *OperationDefinition) Params() []ParameterDefinition {
-	result := append(o.QueryParams, o.HeaderParams...)
+	result := append(o.QueryParams, o.PathParams...)
+	result = append(result, o.HeaderParams...)
 	result = append(result, o.CookieParams...)
 	return result
 }
@@ -482,6 +491,10 @@ func FilterParameterDefinitionByType(params []ParameterDefinition, in string) []
 	var out []ParameterDefinition
 	for _, p := range params {
 		if p.In == in {
+			p.Spec.Extensions[in] = true
+			if p.Schema.OAPISchema != nil {
+				p.Schema.OAPISchema.Extensions[in] = true
+			}
 			out = append(out, p)
 		}
 	}
@@ -542,34 +555,14 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 			if err != nil {
 				return nil, err
 			}
-			// if op.Parameters != nil {
-			// 	for _, param := range op.Parameters { // 遍历 get query
-			// 		if param.Value.In == "query" {
-			// 			param.Value.Schema.Value.Extensions["query"] = true
-			// 		}
-			// 	}
-			// }
-			if op.RequestBody != nil {
-				if _, ok := op.RequestBody.Value.Content["application/json"]; ok {
-					prop := op.RequestBody.Value.Content["application/json"].Schema.Value.Properties
-					if prop != nil {
-						for _, param := range op.Parameters {
-							name := param.Value.Name
-							if param.Value.In == "path" {
-								param.Value.Schema.Value.Extensions["path"] = true
-							}
-							if param.Value.In == "query" {
-								param.Value.Schema.Value.Extensions["query"] = true
-							}
-							prop[name] = param.Value.Schema
-						}
-					}
-				}
-			}
 
 			bodyDefinitions, typeDefinitions, err := GenerateBodyDefinitions(op.OperationID, op.RequestBody)
 			if err != nil {
 				return nil, fmt.Errorf("error generating body definitions: %w", err)
+			}
+			// TODO 如果 body 为空，且有其他 params 参数的时候，自动构造一个 body，追加到 typeDefinitions
+			if bodyDefinitions == nil {
+				bodyDefinitions = makeTypeDefinition(op.OperationID, bodyDefinitions, allParams)
 			}
 
 			responseDefinitions, respDefinitions, err := GenerateResponseDefinitions(op.OperationID, op.Responses)
@@ -582,6 +575,7 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 			middlewareList := []string{}
 			if name, ok := op.Extensions[extGroupName]; ok {
 				groupName = name.(string)
+				groupName = LowercaseFirstCharacter(groupName)
 			}
 			if name, ok := op.Extensions[extMiddleware]; ok {
 				middleware := name.(string)
@@ -589,7 +583,7 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 			}
 
 			opDef := OperationDefinition{
-				PathParams:   pathParams,
+				PathParams:   FilterParameterDefinitionByType(allParams, "path"),
 				HeaderParams: FilterParameterDefinitionByType(allParams, "header"),
 				QueryParams:  FilterParameterDefinitionByType(allParams, "query"),
 				CookieParams: FilterParameterDefinitionByType(allParams, "cookie"),
@@ -631,6 +625,21 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 		}
 	}
 	return groupMapOperations, nil
+}
+
+// makeBodies 构造 body 请求体
+func makeTypeDefinition(operationID string, body []RequestBodyDefinition, parames []ParameterDefinition) []RequestBodyDefinition {
+	resultBody := RequestBodyDefinition{}
+	if body == nil && parames == nil {
+		return body
+	}
+	if body == nil && parames != nil {
+		resultBody.Schema.GoType = `type Demo struct {}`
+		resultBody.Schema.RefType = operationID + "Req"
+		resultBody.ContentType = "application/octet-stream"
+		resultBody.NameTag = "JSON"
+	}
+	return []RequestBodyDefinition{resultBody}
 }
 
 func generateDefaultOperationID(opName string, requestPath string) (string, error) {
@@ -805,7 +814,7 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 			}
 			responseTypeName := ""
 			if content.Schema.Ref == "" {
-				responseTypeName = operationID + statusCode + tag + "Response"
+				responseTypeName = operationID + statusCode + tag + responseTypeSuffix
 			} else {
 				refList := strings.Split(content.Schema.Ref, "/")
 				responseTypeName = ToCamelCase(refList[len(refList)-1])
@@ -814,7 +823,7 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 
 			contentSchema, err := GenerateGoSchema(content.Schema, []string{responseTypeName})
 			if contentSchema.RefType == "" {
-				responseTypeName = operationID + "Response"
+				responseTypeName = operationID + responseTypeSuffix
 				td := TypeDefinition{
 					TypeName: responseTypeName,
 					Schema:   contentSchema,
@@ -897,10 +906,11 @@ func GenerateParamsTypes(op OperationDefinition) []TypeDefinition {
 	var typeDefs []TypeDefinition
 
 	objectParams := op.QueryParams
+	objectParams = append(objectParams, op.PathParams...)
 	objectParams = append(objectParams, op.HeaderParams...)
 	objectParams = append(objectParams, op.CookieParams...)
 
-	typeName := op.OperationId + "Params"
+	typeName := op.OperationId + "Req" // 所有的请求体都是 Req 结尾
 
 	s := Schema{}
 	for _, param := range objectParams {
@@ -915,12 +925,14 @@ func GenerateParamsTypes(op OperationDefinition) []TypeDefinition {
 			})
 		}
 		prop := Property{
-			Description:   param.Spec.Description,
-			JsonFieldName: param.ParamName,
-			Required:      param.Required,
-			Schema:        pSchema,
-			NeedsFormTag:  param.Style() == "form",
-			Extensions:    param.Spec.Extensions,
+			Description:    param.Spec.Description,
+			JsonFieldName:  param.ParamName,
+			Required:       param.Required,
+			Schema:         pSchema,
+			NeedsFormTag:   param.Style() == "form",
+			NeedsHeaderTag: param.Style() == "header",
+			NeedsPathTag:   param.Style() == "path",
+			Extensions:     param.Spec.Extensions,
 		}
 		s.Properties = append(s.Properties, prop)
 	}
@@ -941,6 +953,7 @@ func GenerateTypesForOperations(t *template.Template, ops []OperationDefinition)
 	w := bufio.NewWriter(&buf)
 
 	addTypes, err := GenerateTemplates([]string{"param-types.tmpl", "request-bodies.tmpl"}, t, ops)
+	// addTypes, err := GenerateTemplates([]string{"param-types.tmpl"}, t, ops)
 	if err != nil {
 		return "", fmt.Errorf("error generating type boilerplate for operations: %w", err)
 	}

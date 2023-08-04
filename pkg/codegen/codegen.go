@@ -335,6 +335,7 @@ func OutPutLogicCode(groupName string, op OperationDefinition, opts Configuratio
 	var respName = ""
 	var importPkgName = ""
 	if len(op.Bodies) > 0 {
+		op.BodyRequired = true
 		// TODO 当参数有多个 params 和 body 时需要解析
 		if op.Bodies[0].Schema.RefType != "" { // 当 yaml 没用通过 $ref 引用定义变量时
 			reqName = fmt.Sprintf("*%s.%s", groupName, op.Bodies[0].Schema.RefType)
@@ -342,7 +343,7 @@ func OutPutLogicCode(groupName string, op OperationDefinition, opts Configuratio
 			reqName = fmt.Sprintf("*%s.%s", groupName, op.Bodies[0].Schema.GoType)
 		}
 	}
-	if len(op.Responses) > 0 {
+	if len(op.Responses) > 0 && op.Responses[0].Contents != nil {
 		// TODO 只用状态码 200 定义的
 		if op.Responses[0].Contents[0].Schema.RefType != "" {
 			respName = fmt.Sprintf("%s.%s", groupName, op.Responses[0].Contents[0].Schema.RefType)
@@ -396,14 +397,29 @@ func OutPutHandlerCode(groupName string, op OperationDefinition, opts Configurat
 		importPkgName += "\n"
 		importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.ResponseDir) + `"`
 	}
+	shouldBindMethod := make(map[string]struct{})
+	for _, paras := range op.AllParams() {
+		if paras.In == "path" {
+			shouldBindMethod["Uri"] = struct{}{}
+		}
+		if paras.In == "query" {
+			shouldBindMethod["Query"] = struct{}{}
+		}
+		if paras.In == "header" {
+			shouldBindMethod["Header"] = struct{}{}
+		}
+	}
 	// TODO 从参数解析需要用哪种方式绑定参数 ShouldBindUri, ShouldBindJSON
 	for _, parse := range op.Bodies {
 		if parse.ContentType == "application/json" {
-			shouldBindStr += fmt.Sprintf(`    if err := c.%s(&%s); err != nil {
-				response.HandlerParamsResponse(c, err)
-				return
-			}`, "ShouldBindJSON", "req") + "\n"
+			shouldBindMethod["JSON"] = struct{}{}
 		}
+	}
+	for key := range shouldBindMethod {
+		shouldBindStr += fmt.Sprintf(`    if err := c.%s(&%s); err != nil {
+			response.HandlerParamsResponse(c, err)
+			return
+		}`, "ShouldBind"+key, "req") + "\n"
 	}
 	handlerOp := GinOperation{
 		OperationDefinition: op,
@@ -460,12 +476,26 @@ func checkParamUse(types *[]TypeDefinition, ops []OperationDefinition) []TypeDef
 	for _, op := range ops {
 		if op.PathParams != nil {
 			for _, bo := range op.PathParams {
-				_ = bo
+				opsMap[bo.Schema.GoType] = bo.Schema.GoType
+				if bo.Schema.RefType != "" {
+					opsMap[bo.Schema.RefType] = bo.Schema.GoType
+				}
 			}
 		}
 		if op.Bodies != nil {
 			for _, bo := range op.Bodies {
-				opsMap[bo.Schema.RefType] = bo.Schema.GoType
+				opsMap[bo.Schema.GoType] = bo.Schema.GoType
+				if bo.Schema.RefType != "" {
+					opsMap[bo.Schema.RefType] = bo.Schema.GoType
+				}
+			}
+		}
+		if op.QueryParams != nil {
+			for _, bo := range op.QueryParams {
+				opsMap[bo.Schema.GoType] = bo.Schema.GoType
+				if bo.Schema.RefType != "" {
+					opsMap[bo.Schema.RefType] = bo.Schema.GoType
+				}
 			}
 		}
 		if op.Responses != nil {
@@ -556,8 +586,8 @@ func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []Op
 			return "", fmt.Errorf("error generating Go types for component request bodies: %w", err)
 		}
 		allTypes = append(allTypes, bodyTypes...)
-		// 判断 schema 是否被使用，否则的话就不添加
-		allTypes = checkParamUse(&allTypes, ops)
+		// TODO 判断 schema 是否被使用，否则的话就不添加，深度引用的时候还不行
+		// allTypes = checkParamUse(&allTypes, ops)
 	}
 
 	// Go through all operations, and add their types to allTypes, so that we can

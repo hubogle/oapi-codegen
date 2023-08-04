@@ -38,7 +38,7 @@ var (
 	contentTypesYAML = []string{"application/yaml", "application/x-yaml", "text/yaml", "text/x-yaml"}
 	contentTypesXML  = []string{echo.MIMEApplicationXML, echo.MIMETextXML, "application/problems+xml"}
 
-	responseTypeSuffix = "Response"
+	responseTypeSuffix = "Resp"
 
 	titleCaser = cases.Title(language.English)
 )

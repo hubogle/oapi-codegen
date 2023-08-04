@@ -77,16 +77,18 @@ func (s Schema) GetAdditionalTypeDefs() []TypeDefinition {
 }
 
 type Property struct {
-	Description   string
-	JsonFieldName string
-	Schema        Schema
-	Required      bool
-	Nullable      bool
-	ReadOnly      bool
-	WriteOnly     bool
-	NeedsFormTag  bool
-	Extensions    map[string]interface{}
-	Deprecated    bool
+	Description    string
+	JsonFieldName  string
+	Schema         Schema
+	Required       bool
+	Nullable       bool
+	ReadOnly       bool
+	WriteOnly      bool
+	NeedsFormTag   bool
+	NeedsPathTag   bool
+	NeedsHeaderTag bool
+	Extensions     map[string]interface{}
+	Deprecated     bool
 }
 
 func (p Property) GoFieldName() string {
@@ -552,7 +554,7 @@ func oapiSchemaToGoType(schema *openapi3.Schema, path []string, outSchema *Schem
 		}
 		outSchema.DefineViaAlias = true
 	case "boolean":
-		if f != "" {
+		if f != "boolean" && f != "" { // 兼容 boolean 设置 format
 			return fmt.Errorf("invalid format (%s) for boolean", f)
 		}
 		outSchema.GoType = "bool"
@@ -644,18 +646,25 @@ func GenFieldsFromProperties(props []Property) []string {
 		fieldTags := make(map[string]string)
 
 		if (p.Required && !p.ReadOnly && !p.WriteOnly) || p.Nullable || !overrideOmitEmpty || (p.Required && p.ReadOnly && globalState.options.Compatibility.DisableRequiredReadOnlyAsPointer) {
-			fieldTags["json"] = p.JsonFieldName
 			if p.NeedsFormTag {
 				fieldTags["form"] = p.JsonFieldName
+			} else if p.NeedsPathTag {
+				fieldTags["uri"] = p.JsonFieldName
+			} else if p.NeedsHeaderTag {
+				fieldTags["header"] = p.JsonFieldName
+			} else {
+				fieldTags["json"] = p.JsonFieldName
 			}
 		} else {
-			fieldTags["json"] = p.JsonFieldName + ",omitempty"
 			if p.NeedsFormTag {
 				fieldTags["form"] = p.JsonFieldName + ",omitempty"
+			} else if p.NeedsPathTag {
+				fieldTags["uri"] = p.JsonFieldName + ",omitempty"
+			} else if p.NeedsHeaderTag {
+				fieldTags["header"] = p.JsonFieldName + ",omitempty"
+			} else {
+				fieldTags["json"] = p.JsonFieldName + ",omitempty"
 			}
-		}
-		if _, ok := p.Extensions["path"]; ok {
-			fieldTags["uri"] = p.JsonFieldName
 		}
 
 		// Support x-go-json-ignore
