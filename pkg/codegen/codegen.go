@@ -347,8 +347,11 @@ func OutPutLogicCode(groupName string, op OperationDefinition, opts Configuratio
 		// TODO 只用状态码 200 定义的
 		if op.Responses[0].Contents[0].Schema.RefType != "" {
 			respName = fmt.Sprintf("%s.%s", groupName, op.Responses[0].Contents[0].Schema.RefType)
-		} else {
+		} else if op.Responses[0].Contents[0].Schema.GoType != "" {
 			respName = fmt.Sprintf("%s.%s", groupName, op.Responses[0].Contents[0].Schema.GoType)
+		}
+		if respName == "" {
+			op.Responses = nil
 		}
 	}
 	importPkgName += `"` + path.Join(opts.PackageName, opts.OutputDirOptions.SvcDir) + `"`

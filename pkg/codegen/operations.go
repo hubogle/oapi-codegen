@@ -561,7 +561,7 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 				return nil, fmt.Errorf("error generating body definitions: %w", err)
 			}
 			// TODO 如果 body 为空，且有其他 params 参数的时候，自动构造一个 body，追加到 typeDefinitions
-			if bodyDefinitions == nil {
+			if bodyDefinitions == nil && len(allParams) > 0 {
 				bodyDefinitions = makeTypeDefinition(op.OperationID, bodyDefinitions, allParams)
 			}
 
@@ -630,10 +630,10 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 // makeBodies 构造 body 请求体
 func makeTypeDefinition(operationID string, body []RequestBodyDefinition, parames []ParameterDefinition) []RequestBodyDefinition {
 	resultBody := RequestBodyDefinition{}
-	if body == nil && parames == nil {
+	if body == nil && len(parames) == 0 {
 		return body
 	}
-	if body == nil && parames != nil {
+	if body == nil && len(parames) == 0 {
 		resultBody.Schema.GoType = `type Demo struct {}`
 		resultBody.Schema.RefType = operationID + "Req"
 		resultBody.ContentType = "application/octet-stream"
@@ -952,8 +952,8 @@ func GenerateTypesForOperations(t *template.Template, ops []OperationDefinition)
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
 
-	addTypes, err := GenerateTemplates([]string{"param-types.tmpl", "request-bodies.tmpl"}, t, ops)
-	// addTypes, err := GenerateTemplates([]string{"param-types.tmpl"}, t, ops)
+	// addTypes, err := GenerateTemplates([]string{"param-types.tmpl", "request-bodies.tmpl"}, t, ops)
+	addTypes, err := GenerateTemplates([]string{"param-types.tmpl"}, t, ops)
 	if err != nil {
 		return "", fmt.Errorf("error generating type boilerplate for operations: %w", err)
 	}
