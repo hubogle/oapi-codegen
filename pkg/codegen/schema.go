@@ -357,6 +357,21 @@ func GenerateGoSchema(sref *openapi3.SchemaRef, path []string) (Schema, error) {
 				p := schema.Properties[pName]
 				propertyPath := append(path, pName)
 				pSchema, err := GenerateGoSchema(p, propertyPath)
+				if strings.HasSuffix(path[0], "Resp") || strings.HasSuffix(path[0], "Req") {
+					var flag bool = true
+					if IsPredeclaredGoIdentifier(pSchema.GoType) || strings.HasPrefix(pSchema.GoType, "struct") {
+						flag = false
+					}
+					if pSchema.OAPISchema != nil {
+						val, ok := pSchema.OAPISchema.Extensions[extPropGoType]
+						if ok && val == pSchema.GoType {
+							flag = false
+						}
+					}
+					if flag {
+						pSchema.GoType = "types." + pSchema.GoType
+					}
+				}
 				if err != nil {
 					return Schema{}, fmt.Errorf("error generating Go schema for property '%s': %w", pName, err)
 				}
@@ -461,16 +476,18 @@ func GenerateGoSchema(sref *openapi3.SchemaRef, path []string) (Schema, error) {
 				if err != nil {
 					return outSchema, fmt.Errorf("invalid value for %q: %w", extGoTypeName, err)
 				}
-			} else {
-				typeName = SchemaNameToTypeName(PathToTypeName(path))
 			}
+			// TODO 去除掉枚举类型生成新的类型
+			// } else {
+			// 	typeName = SchemaNameToTypeName(PathToTypeName(path))
+			// }
 
-			typeDef := TypeDefinition{
-				TypeName: typeName,
-				JsonName: strings.Join(path, "."),
-				Schema:   outSchema,
-			}
-			outSchema.AdditionalTypes = append(outSchema.AdditionalTypes, typeDef)
+			// typeDef := TypeDefinition{
+			// 	TypeName: typeName,
+			// 	JsonName: strings.Join(path, "."),
+			// 	Schema:   outSchema,
+			// }
+			// outSchema.AdditionalTypes = append(outSchema.AdditionalTypes, typeDef)
 			outSchema.RefType = typeName
 		}
 	} else {

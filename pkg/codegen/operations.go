@@ -565,11 +565,11 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 				bodyDefinitions = makeTypeDefinition(op.OperationID, bodyDefinitions, allParams)
 			}
 
-			responseDefinitions, respDefinitions, err := GenerateResponseDefinitions(op.OperationID, op.Responses)
+			responseDefinitions, _, err := GenerateResponseDefinitions(op.OperationID, op.Responses)
 			if err != nil {
 				return nil, fmt.Errorf("error generating response definitions: %w", err)
 			}
-			typeDefinitions = append(typeDefinitions, respDefinitions...)
+			// typeDefinitions = append(typeDefinitions, respDefinitions...)
 
 			groupName := "outher"
 			middlewareList := []string{}
@@ -765,7 +765,12 @@ func GenerateBodyDefinitions(operationID string, bodyOrRef *openapi3.RequestBody
 				bd.Encoding[k] = encoding
 			}
 		}
-
+		// 如果这里有相同的就不添加了
+		if len(typeDefinitions) != 0 {
+			if typeDefinitions[0].TypeName == bd.Schema.RefType {
+				typeDefinitions = typeDefinitions[1:]
+			}
+		}
 		bodyDefinitions = append(bodyDefinitions, bd)
 	}
 	sort.Slice(bodyDefinitions, func(i, j int) bool {
@@ -813,10 +818,11 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 				continue
 			}
 			responseTypeName := ""
-			if content.Schema.Ref == "" {
+			responseRep := responseOrRef.Ref
+			if responseRep == "" {
 				responseTypeName = operationID + statusCode + tag + responseTypeSuffix
 			} else {
-				refList := strings.Split(content.Schema.Ref, "/")
+				refList := strings.Split(responseRep, "/")
 				responseTypeName = ToCamelCase(refList[len(refList)-1])
 				content.Schema.Ref = "" // 设置为空可以在 goType 生成代码
 			}

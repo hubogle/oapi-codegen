@@ -148,8 +148,10 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 	// TODO: handler，logic，routes，types，middleware 四个文件夹，内容按照 group 进行 进行分组
 	middlewareMap := make(map[string]struct{})
 	groupNameList := []string{}
-	for groupName, ops := range groupOps {
+	allops := make([]OperationDefinition, 0)
 
+	for groupName, ops := range groupOps {
+		allops = append(allops, ops...)
 		// models 整体生成一个文件
 		var typeDefinitions, constantDefinitions string
 		var xGoTypeImports map[string]goImport
@@ -159,7 +161,7 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("error getting operation imports: %w", err)
 			}
-			typeDefinitions, err = GenerateTypeDefinitions(t, spec, ops, opts.OutputOptions.ExcludeSchemas)
+			typeDefinitions, err = GenerateTypeDefinitions(t, spec, ops, opts.OutputOptions.ExcludeSchemas, true)
 			if err != nil {
 				return "", fmt.Errorf("error generating type definitions: %w", err)
 			}
@@ -214,6 +216,20 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 			}
 		}
 
+	}
+	// 输出 types 定义的字段
+	if opts.Generate.Models && opts.OutputDirOptions.TypesDir != "" {
+		importsOut, err := GenerateImports(t, []string{}, "types")
+		if err != nil {
+			return "", err
+		}
+		typeDefinitions, err := GenerateTypeDefinitions(t, spec, allops, opts.OutputOptions.ExcludeSchemas, false)
+		fpath := path.Join(opts.OutputDirOptions.TypesDir, "types.go")
+		os.Remove(fpath)
+		err = OutputFile("", opts.OutputDirOptions.TypesDir, "types.go", []string{importsOut, typeDefinitions})
+		if err != nil {
+			return "", err
+		}
 	}
 	// 输出定义的 Code 代码
 	if opts.OutputDirOptions.CodeDir != "" {
@@ -564,9 +580,19 @@ func GetProperties(pro Property, jsonFieldNameList *[]string) {
 	}
 }
 
-func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []OperationDefinition, excludeSchemas []string) (string, error) {
+func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []OperationDefinition, excludeSchemas []string, flag bool) (string, error) {
 	var allTypes []TypeDefinition
 	if swagger.Components != nil {
+		responseTypes, err := GenerateTypesForResponses(t, swagger.Components.Responses)
+		if err != nil {
+			return "", fmt.Errorf("error generating Go types for component responses: %w", err)
+		}
+
+		bodyTypes, err := GenerateTypesForRequestBodies(t, swagger.Components.RequestBodies)
+		if err != nil {
+			return "", fmt.Errorf("error generating Go types for component request bodies: %w", err)
+		}
+
 		schemaTypes, err := GenerateTypesForSchemas(t, swagger.Components.Schemas, excludeSchemas)
 		if err != nil {
 			return "", fmt.Errorf("error generating Go types for component schemas: %w", err)
@@ -576,19 +602,12 @@ func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []Op
 		if err != nil {
 			return "", fmt.Errorf("error generating Go types for component parameters: %w", err)
 		}
-		allTypes = append(schemaTypes, paramTypes...)
-
-		responseTypes, err := GenerateTypesForResponses(t, swagger.Components.Responses)
-		if err != nil {
-			return "", fmt.Errorf("error generating Go types for component responses: %w", err)
+		if flag {
+			allTypes = append(responseTypes, bodyTypes...)
+		} else {
+			allTypes = append(schemaTypes, paramTypes...)
 		}
-		allTypes = append(allTypes, responseTypes...)
 
-		bodyTypes, err := GenerateTypesForRequestBodies(t, swagger.Components.RequestBodies)
-		if err != nil {
-			return "", fmt.Errorf("error generating Go types for component request bodies: %w", err)
-		}
-		allTypes = append(allTypes, bodyTypes...)
 		// TODO 判断 schema 是否被使用，否则的话就不添加，深度引用的时候还不行
 		// allTypes = checkParamUse(&allTypes, ops)
 	}
@@ -631,8 +650,14 @@ func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []Op
 	if err != nil {
 		return "", fmt.Errorf("error generating boilerplate for union types with additionalProperties: %w", err)
 	}
+	var typeDefinitions string
+	if flag { // 只需要请求体 req 和 resp
+		typeDefinitions = strings.Join([]string{typesOut, operationsOut, allOfBoilerplate, unionBoilerplate, unionAndAdditionalBoilerplate}, "")
+	} else {
 
-	typeDefinitions := strings.Join([]string{enumsOut, typesOut, operationsOut, allOfBoilerplate, unionBoilerplate, unionAndAdditionalBoilerplate}, "")
+		typeDefinitions = strings.Join([]string{enumsOut, typesOut}, "")
+	}
+
 	return typeDefinitions, nil
 }
 
@@ -801,7 +826,9 @@ func GenerateTypesForRequestBodies(t *template.Template, bodies map[string]*open
 			if err != nil {
 				return nil, fmt.Errorf("error making name for components/schemas/%s: %w", requestBodyName, err)
 			}
-
+			if !strings.HasPrefix(goType.GoType, "struct") {
+				goType.GoType = "types." + goType.GoType
+			}
 			typeDef := TypeDefinition{
 				JsonName: requestBodyName,
 				Schema:   goType,
