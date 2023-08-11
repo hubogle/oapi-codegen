@@ -711,6 +711,9 @@ func GenerateTypesForSchemas(t *template.Template, schemas map[string]*openapi3.
 		if err != nil {
 			return nil, fmt.Errorf("error making name for components/schemas/%s: %w", schemaName, err)
 		}
+		if goSchema.Description == "" && schemaRef.Value.Description != "" {
+			goSchema.Description = schemaRef.Value.Description
+		}
 
 		types = append(types, TypeDefinition{
 			JsonName: schemaName,
@@ -777,6 +780,9 @@ func GenerateTypesForResponses(t *template.Template, responses openapi3.Response
 			goType, err := GenerateGoSchema(jsonResponse.Schema, []string{responseName})
 			if err != nil {
 				return nil, fmt.Errorf("error generating Go type for schema in response %s: %w", responseName, err)
+			}
+			if goType.Description == "" && *response.Description != "" {
+				goType.Description = *response.Description
 			}
 
 			goTypeName, err := renameResponse(responseName, responseOrRef)

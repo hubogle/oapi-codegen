@@ -565,11 +565,16 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 				bodyDefinitions = makeTypeDefinition(op.OperationID, bodyDefinitions, allParams)
 			}
 
-			responseDefinitions, _, err := GenerateResponseDefinitions(op.OperationID, op.Responses)
+			responseDefinitions, respDefinitions, err := GenerateResponseDefinitions(op.OperationID, op.Responses)
 			if err != nil {
 				return nil, fmt.Errorf("error generating response definitions: %w", err)
 			}
-			// typeDefinitions = append(typeDefinitions, respDefinitions...)
+			if op.Responses != nil {
+				if !strings.HasPrefix(op.Responses["200"].Ref, "#/") {
+					// 这里 respDefinitions 是在非 ref 引用的情况下使用的
+					typeDefinitions = append(typeDefinitions, respDefinitions...)
+				}
+			}
 
 			groupName := "outher"
 			middlewareList := []string{}
@@ -630,15 +635,10 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 // makeBodies 构造 body 请求体
 func makeTypeDefinition(operationID string, body []RequestBodyDefinition, parames []ParameterDefinition) []RequestBodyDefinition {
 	resultBody := RequestBodyDefinition{}
-	if body == nil && len(parames) == 0 {
-		return body
-	}
-	if body == nil && len(parames) == 0 {
-		resultBody.Schema.GoType = `type Demo struct {}`
-		resultBody.Schema.RefType = operationID + "Req"
-		resultBody.ContentType = "application/octet-stream"
-		resultBody.NameTag = "JSON"
-	}
+	resultBody.Schema.GoType = `type Demo struct {}`
+	resultBody.Schema.RefType = operationID + "Req"
+	resultBody.ContentType = "application/octet-stream"
+	resultBody.NameTag = "JSON"
 	return []RequestBodyDefinition{resultBody}
 }
 
@@ -829,6 +829,9 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 
 			contentSchema, err := GenerateGoSchema(content.Schema, []string{responseTypeName})
 			if contentSchema.RefType == "" {
+				if contentSchema.Description == "" && *response.Description != "" {
+					contentSchema.Description = *response.Description
+				}
 				responseTypeName = operationID + responseTypeSuffix
 				td := TypeDefinition{
 					TypeName: responseTypeName,
@@ -840,7 +843,9 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 			if err != nil {
 				return nil, nil, fmt.Errorf("error generating request body definition: %w", err)
 			}
-
+			if contentSchema.Description == "" && *response.Description != "" {
+				contentSchema.Description = *response.Description
+			}
 			rcd := ResponseContentDefinition{
 				ContentType: contentType,
 				NameTag:     tag,

@@ -369,7 +369,11 @@ func GenerateGoSchema(sref *openapi3.SchemaRef, path []string) (Schema, error) {
 						}
 					}
 					if flag {
-						pSchema.GoType = "types." + pSchema.GoType
+						if strings.HasPrefix(pSchema.GoType, "[]") {
+							pSchema.GoType = "[]" + "types." + pSchema.GoType[2:]
+						} else {
+							pSchema.GoType = "types." + pSchema.GoType
+						}
 					}
 				}
 				if err != nil {
