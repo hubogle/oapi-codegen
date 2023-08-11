@@ -921,3 +921,24 @@ func CamelToSnake(s string) string {
 	}
 	return result
 }
+
+// GoTypeRename 判断变量，是否在当前文件目录下
+func GoTypeRename(pSchema *Schema) {
+	var flag bool = true
+	if IsPredeclaredGoIdentifier(pSchema.GoType) || strings.HasPrefix(pSchema.GoType, "struct") {
+		flag = false
+	}
+	if pSchema.OAPISchema != nil {
+		val, ok := pSchema.OAPISchema.Extensions[extPropGoType]
+		if ok && val == pSchema.GoType {
+			flag = false
+		}
+	}
+	if flag {
+		if strings.HasPrefix(pSchema.GoType, "[]") {
+			pSchema.GoType = "[]" + "types." + pSchema.GoType[2:]
+		} else {
+			pSchema.GoType = "types." + pSchema.GoType
+		}
+	}
+}

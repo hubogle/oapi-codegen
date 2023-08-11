@@ -564,12 +564,35 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 			if bodyDefinitions == nil && len(allParams) > 0 {
 				bodyDefinitions = makeTypeDefinition(op.OperationID, bodyDefinitions, allParams)
 			}
+			// 当 path 和 bodies 同时存在时，将 path 里的参数加入到 bodies 里面
+			if len(bodyDefinitions) > 0 && len(typeDefinitions) > 0 {
+				propList := make([]Property, 0)
+
+				for _, v := range pathParams {
+					p := Property{
+						JsonFieldName: v.ParamName,
+						NeedsPathTag:  true,
+						Schema:        v.Schema,
+						Required:      true, // path 传递的都是必须参数
+					}
+					if v.Spec.Description != "" && p.Schema.Description == "" {
+						p.Description = v.Spec.Description
+					}
+					propList = append(propList, p)
+				}
+
+				typeDefinitions[0].Schema.Properties = append(typeDefinitions[0].Schema.Properties, propList...)
+
+				typeDefinitions[0].Schema.GoType = GenStructFromSchema(typeDefinitions[0].Schema)
+
+				pathParams = nil
+			}
 
 			responseDefinitions, respDefinitions, err := GenerateResponseDefinitions(op.OperationID, op.Responses)
 			if err != nil {
 				return nil, fmt.Errorf("error generating response definitions: %w", err)
 			}
-			if op.Responses != nil {
+			if op.Responses != nil && op.Responses["200"] != nil {
 				if !strings.HasPrefix(op.Responses["200"].Ref, "#/") {
 					// 这里 respDefinitions 是在非 ref 引用的情况下使用的
 					typeDefinitions = append(typeDefinitions, respDefinitions...)
@@ -586,9 +609,9 @@ func OperationDefinitions(swagger *openapi3.T) (map[string][]OperationDefinition
 				middleware := name.(string)
 				middlewareList = strings.Split(middleware, ",")
 			}
-
+			// 如果用 ref 引用的话，就不用管了，后面会在 GenerateTypeDefinitions 里处理 wagger.Components
 			opDef := OperationDefinition{
-				PathParams:   FilterParameterDefinitionByType(allParams, "path"),
+				PathParams:   pathParams,
 				HeaderParams: FilterParameterDefinitionByType(allParams, "header"),
 				QueryParams:  FilterParameterDefinitionByType(allParams, "query"),
 				CookieParams: FilterParameterDefinitionByType(allParams, "cookie"),
@@ -697,8 +720,8 @@ func GenerateBodyDefinitions(operationID string, bodyOrRef *openapi3.RequestBody
 			continue
 		}
 		bodyTypeName := ""
-		if bodyOrRef.Ref == "" {
-			bodyTypeName = operationID + tag + "Body"
+		if bodyOrRef.Ref == "" { // 没有通过 ref 引用，需要添加到 typeDefinitions 中去生成
+			bodyTypeName = operationID + "Req"
 		} else {
 			ref := bodyOrRef.Ref
 			refList := strings.Split(ref, "/")
@@ -717,6 +740,13 @@ func GenerateBodyDefinitions(operationID string, bodyOrRef *openapi3.RequestBody
 				return nil, nil, fmt.Errorf("error turning reference (%s) into a Go type: %w", content.Schema.Ref, err)
 			}
 			bodySchema.RefType = refType
+		}
+		if strings.HasPrefix(bodyOrRef.Ref, "#") { // 通过 requestBody 使用 ref 引用到 components，用的变量名称
+			refList := strings.Split(bodyOrRef.Ref, "/")
+			bodySchema.GoType = ToCamelCase(refList[len(refList)-1])
+			if bodySchema.RefType != bodySchema.GoType {
+				bodySchema.RefType = bodySchema.GoType
+			}
 		}
 
 		// If the request has a body, but it's not a user defined
@@ -766,11 +796,11 @@ func GenerateBodyDefinitions(operationID string, bodyOrRef *openapi3.RequestBody
 			}
 		}
 		// 如果这里有相同的就不添加了
-		if len(typeDefinitions) != 0 {
-			if typeDefinitions[0].TypeName == bd.Schema.RefType {
-				typeDefinitions = typeDefinitions[1:]
-			}
-		}
+		// if len(typeDefinitions) != 0 {
+		// 	if typeDefinitions[0].TypeName == bd.Schema.RefType {
+		// 		typeDefinitions = typeDefinitions[1:]
+		// 	}
+		// }
 		bodyDefinitions = append(bodyDefinitions, bd)
 	}
 	sort.Slice(bodyDefinitions, func(i, j int) bool {
@@ -833,6 +863,7 @@ func GenerateResponseDefinitions(operationID string, responses openapi3.Response
 					contentSchema.Description = *response.Description
 				}
 				responseTypeName = operationID + responseTypeSuffix
+				GoTypeRename(&contentSchema)
 				td := TypeDefinition{
 					TypeName: responseTypeName,
 					Schema:   contentSchema,

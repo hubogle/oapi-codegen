@@ -181,6 +181,7 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 		// 输出 types 定义的字段
 		if opts.Generate.Models && opts.OutputDirOptions.TypesDir != "" {
 			externalImports := append(importMapping.GoImports(), importMap(xGoTypeImports).GoImports()...)
+			externalImports = append(externalImports, `"`+path.Join(opts.PackageName, opts.OutputDirOptions.TypesDir)+`"`)
 			importsOut, err := GenerateImports(t, externalImports, groupName)
 			if err != nil {
 				return "", err

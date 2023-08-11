@@ -358,23 +358,7 @@ func GenerateGoSchema(sref *openapi3.SchemaRef, path []string) (Schema, error) {
 				propertyPath := append(path, pName)
 				pSchema, err := GenerateGoSchema(p, propertyPath)
 				if strings.HasSuffix(path[0], "Resp") || strings.HasSuffix(path[0], "Req") {
-					var flag bool = true
-					if IsPredeclaredGoIdentifier(pSchema.GoType) || strings.HasPrefix(pSchema.GoType, "struct") {
-						flag = false
-					}
-					if pSchema.OAPISchema != nil {
-						val, ok := pSchema.OAPISchema.Extensions[extPropGoType]
-						if ok && val == pSchema.GoType {
-							flag = false
-						}
-					}
-					if flag {
-						if strings.HasPrefix(pSchema.GoType, "[]") {
-							pSchema.GoType = "[]" + "types." + pSchema.GoType[2:]
-						} else {
-							pSchema.GoType = "types." + pSchema.GoType
-						}
-					}
+					GoTypeRename(&pSchema)
 				}
 				if err != nil {
 					return Schema{}, fmt.Errorf("error generating Go schema for property '%s': %w", pName, err)
