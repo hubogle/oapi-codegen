@@ -13,6 +13,7 @@
 1. `x-middleware: "auth,rate_limit"` 该 `tag` 定义会生成中间件
 2. `x-group: admin` 该 `tag` 将多个 `path` 定义为同一个 `group`
 3. `operationId: getUser` 根据该 `tag` 生成请求体名和返回体名，以及生成 `hander, logic` 的文件名。
+4. `x-validate`: 定义 `validate` 校验字段规则
 
 `properties` 定义规则：
 1. `x-go-type`: 指定 `Go` 的类型名称。

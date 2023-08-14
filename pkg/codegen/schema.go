@@ -45,6 +45,9 @@ func (s Schema) IsRef() bool {
 }
 
 func (s Schema) TypeDecl() string {
+	if s.OAPISchema != nil && s.OAPISchema.OneOf != nil { // 使用 oneof 的时候类型为 any
+		return "any"
+	}
 	if s.IsRef() {
 		return s.RefType
 	}

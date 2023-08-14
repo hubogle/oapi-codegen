@@ -161,6 +161,7 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("error getting operation imports: %w", err)
 			}
+			// 传递需要的 ref 和需要解析的 groupName
 			typeDefinitions, err = GenerateTypeDefinitions(t, spec, ops, opts.OutputOptions.ExcludeSchemas, true)
 			if err != nil {
 				return "", fmt.Errorf("error generating type definitions: %w", err)
@@ -584,12 +585,32 @@ func GetProperties(pro Property, jsonFieldNameList *[]string) {
 func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []OperationDefinition, excludeSchemas []string, flag bool) (string, error) {
 	var allTypes []TypeDefinition
 	if swagger.Components != nil {
-		responseTypes, err := GenerateTypesForResponses(t, swagger.Components.Responses)
+		opsRequestMap := make(map[string]struct{})
+		opsResponseMap := make(map[string]struct{})
+		for _, op := range ops {
+			if op.Bodies != nil {
+				for _, body := range op.Bodies {
+					if body.Schema.RefType != "" {
+						opsRequestMap[body.Schema.RefType] = struct{}{}
+					}
+				}
+			}
+			if op.Responses != nil {
+				for _, resp := range op.Responses {
+					if resp.StatusCode == "200" {
+						if resp.Contents != nil && resp.Contents[0].Schema.RefType != "" {
+							opsResponseMap[resp.Contents[0].Schema.RefType] = struct{}{}
+						}
+					}
+				}
+			}
+		}
+		responseTypes, err := GenerateTypesForResponses(t, swagger.Components.Responses, opsResponseMap)
 		if err != nil {
 			return "", fmt.Errorf("error generating Go types for component responses: %w", err)
 		}
 
-		bodyTypes, err := GenerateTypesForRequestBodies(t, swagger.Components.RequestBodies)
+		bodyTypes, err := GenerateTypesForRequestBodies(t, swagger.Components.RequestBodies, opsRequestMap)
 		if err != nil {
 			return "", fmt.Errorf("error generating Go types for component request bodies: %w", err)
 		}
@@ -766,10 +787,13 @@ func GenerateTypesForParameters(t *template.Template, params map[string]*openapi
 
 // GenerateTypesForResponses generates type definitions for any custom types defined in the
 // components/responses section of the Swagger spec.
-func GenerateTypesForResponses(t *template.Template, responses openapi3.Responses) ([]TypeDefinition, error) {
+func GenerateTypesForResponses(t *template.Template, responses openapi3.Responses, opsResponseMap map[string]struct{}) ([]TypeDefinition, error) {
 	var types []TypeDefinition
 
 	for _, responseName := range SortedResponsesKeys(responses) {
+		if _, ok := opsResponseMap[responseName]; !ok {
+			continue
+		}
 		responseOrRef := responses[responseName]
 
 		// We have to generate the response object. We're only going to
@@ -813,10 +837,13 @@ func GenerateTypesForResponses(t *template.Template, responses openapi3.Response
 
 // GenerateTypesForRequestBodies generates type definitions for any custom types defined in the
 // components/requestBodies section of the Swagger spec.
-func GenerateTypesForRequestBodies(t *template.Template, bodies map[string]*openapi3.RequestBodyRef) ([]TypeDefinition, error) {
+func GenerateTypesForRequestBodies(t *template.Template, bodies map[string]*openapi3.RequestBodyRef, opsRequestMap map[string]struct{}) ([]TypeDefinition, error) {
 	var types []TypeDefinition
 
 	for _, requestBodyName := range SortedRequestBodyKeys(bodies) {
+		if _, ok := opsRequestMap[requestBodyName]; !ok {
+			continue
+		}
 		requestBodyRef := bodies[requestBodyName]
 
 		// As for responses, we will only generate Go code for JSON bodies,
