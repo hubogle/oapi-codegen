@@ -936,7 +936,9 @@ func GoTypeRename(pSchema *Schema) {
 	}
 	if flag {
 		if strings.HasPrefix(pSchema.GoType, "[]") {
-			pSchema.GoType = "[]" + "types." + pSchema.GoType[2:]
+			if !(IsPredeclaredGoIdentifier(pSchema.GoType[2:])) {
+				pSchema.GoType = "[]" + "types." + pSchema.GoType[2:]
+			}
 		} else {
 			pSchema.GoType = "types." + pSchema.GoType
 		}
