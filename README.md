@@ -14,6 +14,8 @@
 2. `x-group: admin` 该 `tag` 将多个 `path` 定义为同一个 `group`
 3. `operationId: getUser` 根据该 `tag` 生成请求体名和返回体名，以及生成 `hander, logic` 的文件名。
 4. `x-validate`: 定义 `validate` 校验字段规则
+5. 请求体定义在 `components/requestBodies` 下面，建议用 `Req` 进行命名结尾
+6. 返回体定义在 `components/responses` 下面，建议用 `Resp` 进行命名结尾
 
 `properties` 定义规则：
 1. `x-go-type`: 指定 `Go` 的类型名称。

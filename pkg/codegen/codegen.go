@@ -149,6 +149,7 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 	middlewareMap := make(map[string]struct{})
 	groupNameList := []string{}
 	allops := make([]OperationDefinition, 0)
+	includeSchemas := []string{}
 
 	for groupName, ops := range groupOps {
 		allops = append(allops, ops...)
@@ -161,8 +162,30 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("error getting operation imports: %w", err)
 			}
+			opsRequestMap := make(map[string]struct{})
+			opsResponseMap := make(map[string]struct{})
+			for _, op := range ops {
+				if op.Bodies != nil {
+					for _, body := range op.Bodies {
+						if body.Schema.RefType != "" {
+							opsRequestMap[body.Schema.RefType] = struct{}{}
+							includeSchemas = append(includeSchemas, body.Schema.RefType)
+						}
+					}
+				}
+				if op.Responses != nil {
+					for _, resp := range op.Responses {
+						if resp.StatusCode == "200" {
+							if resp.Contents != nil && resp.Contents[0].Schema.RefType != "" {
+								opsResponseMap[resp.Contents[0].Schema.RefType] = struct{}{}
+								includeSchemas = append(includeSchemas, resp.Contents[0].Schema.RefType)
+							}
+						}
+					}
+				}
+			}
 			// 传递需要的 ref 和需要解析的 groupName
-			typeDefinitions, err = GenerateTypeDefinitions(t, spec, ops, opts.OutputOptions.ExcludeSchemas, true)
+			typeDefinitions, err = GenerateTypeDefinitions(t, spec, ops, opts.OutputOptions.ExcludeSchemas, true, opsResponseMap, opsRequestMap, includeSchemas)
 			if err != nil {
 				return "", fmt.Errorf("error generating type definitions: %w", err)
 			}
@@ -225,7 +248,7 @@ func Generate(spec *openapi3.T, opts Configuration) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		typeDefinitions, err := GenerateTypeDefinitions(t, spec, allops, opts.OutputOptions.ExcludeSchemas, false)
+		typeDefinitions, err := GenerateTypeDefinitions(t, spec, allops, includeSchemas, false, nil, nil, nil)
 		fpath := path.Join(opts.OutputDirOptions.TypesDir, "types.go")
 		os.Remove(fpath)
 		err = OutputFile("", opts.OutputDirOptions.TypesDir, "types.go", []string{importsOut, typeDefinitions})
@@ -582,29 +605,9 @@ func GetProperties(pro Property, jsonFieldNameList *[]string) {
 	}
 }
 
-func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []OperationDefinition, excludeSchemas []string, flag bool) (string, error) {
+func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []OperationDefinition, excludeSchemas []string, flag bool, opsResponseMap, opsRequestMap map[string]struct{}, includeSchemasMap []string) (string, error) {
 	var allTypes []TypeDefinition
 	if swagger.Components != nil {
-		opsRequestMap := make(map[string]struct{})
-		opsResponseMap := make(map[string]struct{})
-		for _, op := range ops {
-			if op.Bodies != nil {
-				for _, body := range op.Bodies {
-					if body.Schema.RefType != "" {
-						opsRequestMap[body.Schema.RefType] = struct{}{}
-					}
-				}
-			}
-			if op.Responses != nil {
-				for _, resp := range op.Responses {
-					if resp.StatusCode == "200" {
-						if resp.Contents != nil && resp.Contents[0].Schema.RefType != "" {
-							opsResponseMap[resp.Contents[0].Schema.RefType] = struct{}{}
-						}
-					}
-				}
-			}
-		}
 		responseTypes, err := GenerateTypesForResponses(t, swagger.Components.Responses, opsResponseMap)
 		if err != nil {
 			return "", fmt.Errorf("error generating Go types for component responses: %w", err)
@@ -615,7 +618,7 @@ func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []Op
 			return "", fmt.Errorf("error generating Go types for component request bodies: %w", err)
 		}
 
-		schemaTypes, err := GenerateTypesForSchemas(t, swagger.Components.Schemas, excludeSchemas)
+		schemaTypes, err := GenerateTypesForSchemas(t, swagger.Components.Schemas, excludeSchemas, nil)
 		if err != nil {
 			return "", fmt.Errorf("error generating Go types for component schemas: %w", err)
 		}
@@ -625,7 +628,12 @@ func GenerateTypeDefinitions(t *template.Template, swagger *openapi3.T, ops []Op
 			return "", fmt.Errorf("error generating Go types for component parameters: %w", err)
 		}
 		if flag {
+			schemaTypes, err = GenerateTypesForSchemas(t, swagger.Components.Schemas, excludeSchemas, includeSchemasMap)
+			if err != nil {
+				return "", fmt.Errorf("error generating Go types for component schemas: %w", err)
+			}
 			allTypes = append(responseTypes, bodyTypes...)
+			allTypes = append(allTypes, schemaTypes...)
 		} else {
 			allTypes = append(schemaTypes, paramTypes...)
 		}
@@ -711,16 +719,26 @@ func GenerateConstants(t *template.Template, ops []OperationDefinition) (string,
 
 // GenerateTypesForSchemas generates type definitions for any custom types defined in the
 // components/schemas section of the Swagger spec.
-func GenerateTypesForSchemas(t *template.Template, schemas map[string]*openapi3.SchemaRef, excludeSchemas []string) ([]TypeDefinition, error) {
+func GenerateTypesForSchemas(t *template.Template, schemas map[string]*openapi3.SchemaRef, excludeSchemas []string, includeSchemas []string) ([]TypeDefinition, error) {
 	excludeSchemasMap := make(map[string]bool)
+	includeSchemasMap := make(map[string]bool)
 	for _, schema := range excludeSchemas {
 		excludeSchemasMap[schema] = true
 	}
+	for _, schema := range includeSchemas {
+		includeSchemasMap[schema] = true
+	}
+
 	types := make([]TypeDefinition, 0)
 	// We're going to define Go types for every object under components/schemas
 	for _, schemaName := range SortedSchemaKeys(schemas) {
 		if _, ok := excludeSchemasMap[schemaName]; ok {
 			continue
+		}
+		if includeSchemas != nil {
+			if _, ok := includeSchemasMap[schemaName]; !ok {
+				continue
+			}
 		}
 		schemaRef := schemas[schemaName]
 
